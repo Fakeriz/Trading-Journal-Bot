@@ -166,8 +166,11 @@ async def main():
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(CommandHandler("help", help_command))
 
+    # Set webhook secara manual
+    await application.bot.set_webhook(url=WEBHOOK_URL)
+
     # Menjalankan webhook
-    await application.start(
+    await application.start_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path="webhook",
