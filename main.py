@@ -169,14 +169,13 @@ async def main():
     # Set webhook secara manual
     await application.bot.set_webhook(url=WEBHOOK_URL)
 
-    # Menjalankan webhook
-    await application.start_webhook(
+    # Menjalankan webhook (diubah dari start_webhook menjadi run_webhook)
+    await application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path="webhook",
-        webhook_url=WEBHOOK_URL
+        webhook_url=WEBHOOK_URL  # Pastikan webhook URL Anda benar
     )
-
     await application.wait_until_shutdown()
 
 if __name__ == '__main__':
