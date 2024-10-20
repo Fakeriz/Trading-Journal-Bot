@@ -3,6 +3,7 @@ import sqlite3
 import csv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackContext, filters, ConversationHandler
+import asyncio
 
 # Koneksi database SQLite
 def create_connection():
@@ -169,15 +170,18 @@ async def main():
     # Set webhook secara manual
     await application.bot.set_webhook(url=WEBHOOK_URL)
 
-    # Menjalankan webhook (diubah dari start_webhook menjadi run_webhook)
-    await application.run_webhook(
+    # Menjalankan webhook dengan aman (menghindari loop error)
+    await application.start_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path="webhook",
-        webhook_url=WEBHOOK_URL  # Pastikan webhook URL Anda benar
+        webhook_url=WEBHOOK_URL
     )
+
+    # Menunggu hingga aplikasi di-shutdown
     await application.wait_until_shutdown()
 
 if __name__ == '__main__':
-    import asyncio
-    asyncio.run(main())
+    # Pastikan loop dikelola dengan benar
+    if not asyncio.get_event_loop().is_running():
+        asyncio.run(main())
