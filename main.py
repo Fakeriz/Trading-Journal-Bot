@@ -171,7 +171,7 @@ async def main():
     await application.bot.set_webhook(url=WEBHOOK_URL)
 
     # Menjalankan webhook dengan aman (menghindari loop error)
-    await application.start_webhook(
+    await application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path="webhook",
