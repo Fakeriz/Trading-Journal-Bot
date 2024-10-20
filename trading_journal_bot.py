@@ -129,8 +129,12 @@ async def main() -> None:
     application.add_handler(CommandHandler("delete_entry", delete_entry))
     application.add_handler(CommandHandler("clear_journal", clear_journal))
 
-    # Start bot
+    # Inisialisasi bot sebelum menjalankan
+    await application.initialize()
+
+    # Start bot setelah inisialisasi selesai
     await application.start()
+    await application.updater.start_polling()  # Menambahkan polling jika dibutuhkan
     await application.idle()
 
 if __name__ == '__main__':
