@@ -132,10 +132,15 @@ async def main() -> None:
     # Inisialisasi bot sebelum menjalankan
     await application.initialize()
 
-    # Start bot setelah inisialisasi selesai
+    # Mulai polling
     await application.start()
-    await application.updater.start_polling()  # Menambahkan polling jika dibutuhkan
+    await application.updater.start_polling()
+
+    # Idle memastikan bot tetap berjalan
     await application.idle()
+
+    # Tutup aplikasi dengan benar saat task asyncio dibatalkan
+    await application.stop()
 
 if __name__ == '__main__':
     import asyncio
