@@ -167,7 +167,7 @@ async def main():
     application.add_handler(CommandHandler("help", help_command))
 
     # Menjalankan webhook
-    await application.start_webhook(
+    await application.start(
         listen="0.0.0.0",
         port=PORT,
         url_path="webhook",
