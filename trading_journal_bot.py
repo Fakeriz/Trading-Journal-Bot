@@ -1,10 +1,12 @@
 import logging
 import sqlite3
+import os
+import time
+import asyncio
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from dotenv import load_dotenv
-import os
 
 # Load environment variables from .env file
 load_dotenv()
@@ -113,14 +115,27 @@ async def clear_journal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 def error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.warning('Update "%s" caused error "%s"', update, context.error)
 
-# Fungsi utama untuk menjalankan bot
-async def main() -> None:
-    setup_database()
-    # Token bot dari BotFather
-    TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+async def start_polling(application):
+    while True:
+        try:
+            await application.updater.start_polling()
+            await application.idle()
+        except asyncio.CancelledError:
+            print("Polling task was cancelled. Retrying...")
+            time.sleep(5)  # Tunggu sebelum mencoba lagi
 
-    # Setup bot dengan ApplicationBuilder (Python terbaru)
+async def main():
+    setup_database()
+    TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     application = ApplicationBuilder().token(TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+
+    await application.initialize()
+    await application.start()
+
+    # Jalankan polling dengan mekanisme retry
+    await start_polling(application)
 
     # Tambahkan handler untuk perintah
     application.add_handler(CommandHandler("start", start))
@@ -129,19 +144,5 @@ async def main() -> None:
     application.add_handler(CommandHandler("delete_entry", delete_entry))
     application.add_handler(CommandHandler("clear_journal", clear_journal))
 
-    # Inisialisasi bot sebelum menjalankan
-    await application.initialize()
-
-    # Mulai polling
-    await application.start()
-    await application.updater.start_polling()
-
-    # Idle memastikan bot tetap berjalan
-    await application.idle()
-
-    # Tutup aplikasi dengan benar saat task asyncio dibatalkan
-    await application.stop()
-
 if __name__ == '__main__':
-    import asyncio
     asyncio.run(main())
