@@ -207,9 +207,10 @@ async def link_tradingview_handler(update: Update, context: CallbackContext) -> 
     await update.message.reply_text("Data trading berhasil disimpan!")
     return ConversationHandler.END
 
+TOKEN_TELEGRAM = os.environ.get('TELEGRAM_BOT_TOKEN')
 # Fungsi utama untuk menjalankan bot
 async def main():
-    application = Application.builder().token('YOUR_TELEGRAM_BOT_TOKEN').build()
+    application = Application.builder().token('TOKEN_TELEGRAM').build()
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
