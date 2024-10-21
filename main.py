@@ -236,7 +236,22 @@ async def main():
 
     # Jalankan bot
     await application.run_polling()
+    # Tambahkan command handler
+    application.add_handler(CommandHandler('start', start))
 
+    # Menjalankan polling bot secara asynchronous
+    await application.start()
+
+    # Tetap berjalan hingga ada interupsi (misalnya, CTRL+C)
+    await application.updater.start_polling()
+
+    try:
+        # Menunggu sampai event loop selesai
+        await application.wait_until_stopped()
+    finally:
+        # Menutup aplikasi dengan benar
+        await application.stop()
+        await application.shutdown()
 if __name__ == '__main__':
     import asyncio
     asyncio.run(main())
