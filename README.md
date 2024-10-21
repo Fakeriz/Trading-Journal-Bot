@@ -20,7 +20,7 @@ A Telegram bot to log forex trades in a journal. The bot stores trade data based
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/trading-journal-bot.git
+   git clone https://github.com/Fakeriz/trading-journal-bot.git
    cd trading-journal-bot
    ```
 

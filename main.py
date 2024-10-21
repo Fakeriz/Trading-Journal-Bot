@@ -1,256 +1,240 @@
-import os
-import csv
+import logging
 import sqlite3
-from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, filters
+import pandas as pd
+from datetime import datetime, timedelta
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ConversationHandler,
+    filters,
+    CallbackContext,
+)
 
-# Konfigurasi
-TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
-PORT = int(os.environ.get('PORT', 8443))
+# Konfigurasi logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
-# States untuk ConversationHandler
-(PAIR, ORDER_TYPE, ENTRY_PRICE, TAKE_PROFIT, STOP_LOSS, EXIT_PRICE, PROFIT_LOSS, NOTES, TRADINGVIEW_LINK) = range(9)
+logger = logging.getLogger(__name__)
 
-# Fungsi untuk menginisialisasi database
-def init_db():
-    conn = sqlite3.connect('trading_journal.db')
+# State dalam percakapan
+(
+    DATE, TIME, PAIR, WIN_LOSS, POSITION, ENTRY, STOPLOSS, TAKEPROFIT,
+    RR, PNL, STRATEGY, LINK_TRADINGVIEW
+) = range(12)
+
+# Fungsi untuk membuat koneksi database per pengguna
+def connect_db(user_id):
+    return sqlite3.connect(f'user_{user_id}.db')
+
+# Fungsi untuk membuat tabel jika belum ada
+def create_table(conn):
     cursor = conn.cursor()
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS trades
-    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-     user_id INTEGER,
-     date TEXT,
-     pair TEXT,
-     order_type TEXT,
-     entry_price REAL,
-     take_profit REAL,
-     stop_loss REAL,
-     exit_price REAL,
-     profit_loss REAL,
-     notes TEXT,
-     tradingview_link TEXT)
+        CREATE TABLE IF NOT EXISTS trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT,
+            time TEXT,
+            pair TEXT,
+            win_loss TEXT,
+            position TEXT,
+            entry REAL,
+            stoploss REAL,
+            takeprofit REAL,
+            rr REAL,
+            pnl REAL,
+            strategy TEXT,
+            link_tradingview TEXT
+        )
     ''')
     conn.commit()
+
+# Fungsi untuk memulai bot
+async def start(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+    conn = connect_db(user_id)
+    create_table(conn)
     conn.close()
 
-# Fungsi untuk menambahkan entri baru
-async def add_trade(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id
-    context.user_data['trade'] = {'user_id': user_id, 'date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-    await update.message.reply_text("Masukkan pair (instrumen):")
-    return PAIR
+    await update.message.reply_text(
+        "Selamat datang di Jurnal Trading!\n"
+        "Silakan masukkan tanggal (YYYY-MM-DD):"
+    )
+    return DATE
 
-async def pair(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['trade']['pair'] = update.message.text
-    await update.message.reply_text("Masukkan jenis order (Buy/Sell):")
-    return ORDER_TYPE
+# Fungsi untuk mencatat tanggal
+async def date_handler(update: Update, context: CallbackContext) -> int:
+    try:
+        date = datetime.strptime(update.message.text, '%Y-%m-%d')
+        context.user_data['date'] = date.strftime('%Y-%m-%d')
+        await update.message.reply_text("Masukkan waktu (HH:MM):")
+        return TIME
+    except ValueError:
+        await update.message.reply_text("Format tanggal tidak valid. Gunakan format YYYY-MM-DD.")
+        return DATE
 
-async def order_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['trade']['order_type'] = update.message.text
-    await update.message.reply_text("Masukkan harga entry:")
-    return ENTRY_PRICE
+# Fungsi untuk mencatat waktu
+async def time_handler(update: Update, context: CallbackContext) -> int:
+    try:
+        time = datetime.strptime(update.message.text, '%H:%M')
+        context.user_data['time'] = time.strftime('%H:%M')
+        await update.message.reply_text("Masukkan pasangan mata uang (contoh: XAUUSD):")
+        return PAIR
+    except ValueError:
+        await update.message.reply_text("Format waktu tidak valid. Gunakan format HH:MM.")
+        return TIME
 
-async def entry_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['trade']['entry_price'] = float(update.message.text)
-    await update.message.reply_text("Masukkan Take Profit (TP):")
-    return TAKE_PROFIT
+# Fungsi untuk mencatat pair
+async def pair_handler(update: Update, context: CallbackContext) -> int:
+    context.user_data['pair'] = update.message.text.upper()
+    await update.message.reply_text("Apakah hasilnya Win atau Loss?")
+    return WIN_LOSS
 
-async def take_profit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['trade']['take_profit'] = float(update.message.text)
-    await update.message.reply_text("Masukkan Stop Loss (SL):")
-    return STOP_LOSS
+# Fungsi untuk mencatat win/loss
+async def win_loss_handler(update: Update, context: CallbackContext) -> int:
+    win_loss = update.message.text.lower()
+    if win_loss in ['win', 'loss']:
+        context.user_data['win_loss'] = win_loss
+        await update.message.reply_text("Masukkan posisi (Long/Short):")
+        return POSITION
+    else:
+        await update.message.reply_text("Masukkan Win atau Loss.")
+        return WIN_LOSS
 
-async def stop_loss(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['trade']['stop_loss'] = float(update.message.text)
-    await update.message.reply_text("Masukkan harga exit:")
-    return EXIT_PRICE
+# Fungsi untuk mencatat posisi (long/short)
+async def position_handler(update: Update, context: CallbackContext) -> int:
+    position = update.message.text.lower()
+    if position in ['long', 'short']:
+        context.user_data['position'] = position
+        await update.message.reply_text("Masukkan harga entry:")
+        return ENTRY
+    else:
+        await update.message.reply_text("Masukkan Long atau Short.")
+        return POSITION
 
-async def exit_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['trade']['exit_price'] = float(update.message.text)
-    await update.message.reply_text("Masukkan Profit/Loss:")
-    return PROFIT_LOSS
+# Fungsi untuk mencatat entry price
+async def entry_handler(update: Update, context: CallbackContext) -> int:
+    try:
+        context.user_data['entry'] = float(update.message.text)
+        await update.message.reply_text("Masukkan harga stoploss:")
+        return STOPLOSS
+    except ValueError:
+        await update.message.reply_text("Masukkan angka yang valid.")
+        return ENTRY
 
-async def profit_loss(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['trade']['profit_loss'] = float(update.message.text)
-    await update.message.reply_text("Masukkan catatan tambahan (opsional) atau ketik 'skip':")
-    return NOTES
+# Fungsi untuk mencatat stoploss
+async def stoploss_handler(update: Update, context: CallbackContext) -> int:
+    try:
+        context.user_data['stoploss'] = float(update.message.text)
+        await update.message.reply_text("Masukkan harga takeprofit:")
+        return TAKEPROFIT
+    except ValueError:
+        await update.message.reply_text("Masukkan angka yang valid.")
+        return STOPLOSS
 
-async def notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.text.lower() != 'skip':
-        context.user_data['trade']['notes'] = update.message.text
-    await update.message.reply_text("Masukkan link TradingView (opsional) atau ketik 'skip':")
-    return TRADINGVIEW_LINK
+# Fungsi untuk mencatat takeprofit
+async def takeprofit_handler(update: Update, context: CallbackContext) -> int:
+    try:
+        context.user_data['takeprofit'] = float(update.message.text)
+        await update.message.reply_text("Masukkan RR:")
+        return RR
+    except ValueError:
+        await update.message.reply_text("Masukkan angka yang valid.")
+        return TAKEPROFIT
 
-async def tradingview_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.text.lower() != 'skip':
-        context.user_data['trade']['tradingview_link'] = update.message.text
-    
-    # Simpan data ke database
-    conn = sqlite3.connect('trading_journal.db')
+# Fungsi untuk mencatat RR
+async def rr_handler(update: Update, context: CallbackContext) -> int:
+    try:
+        context.user_data['rr'] = float(update.message.text)
+        await update.message.reply_text("Masukkan PnL:")
+        return PNL
+    except ValueError:
+        await update.message.reply_text("Masukkan angka yang valid.")
+        return RR
+
+# Fungsi untuk mencatat PnL
+async def pnl_handler(update: Update, context: CallbackContext) -> int:
+    try:
+        context.user_data['pnl'] = float(update.message.text)
+        await update.message.reply_text("Masukkan strategi (Opsional):")
+        return STRATEGY
+    except ValueError:
+        await update.message.reply_text("Masukkan angka yang valid.")
+        return PNL
+
+# Fungsi untuk mencatat strategi
+async def strategy_handler(update: Update, context: CallbackContext) -> int:
+    context.user_data['strategy'] = update.message.text
+    await update.message.reply_text("Masukkan link TradingView (Opsional):")
+    return LINK_TRADINGVIEW
+
+# Fungsi untuk mencatat link TradingView
+async def link_tradingview_handler(update: Update, context: CallbackContext) -> int:
+    context.user_data['link_tradingview'] = update.message.text
+    user_id = update.message.from_user.id
+    conn = connect_db(user_id)
     cursor = conn.cursor()
+
+    # Simpan data ke database
     cursor.execute('''
-    INSERT INTO trades (user_id, date, pair, order_type, entry_price, take_profit, stop_loss, exit_price, profit_loss, notes, tradingview_link)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO trades (date, time, pair, win_loss, position, entry, stoploss, takeprofit, rr, pnl, strategy, link_tradingview)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
-        context.user_data['trade']['user_id'],
-        context.user_data['trade']['date'],
-        context.user_data['trade']['pair'],
-        context.user_data['trade']['order_type'],
-        context.user_data['trade']['entry_price'],
-        context.user_data['trade']['take_profit'],
-        context.user_data['trade']['stop_loss'],
-        context.user_data['trade']['exit_price'],
-        context.user_data['trade']['profit_loss'],
-        context.user_data['trade'].get('notes', ''),
-        context.user_data['trade'].get('tradingview_link', '')
+        context.user_data['date'],
+        context.user_data['time'],
+        context.user_data['pair'],
+        context.user_data['win_loss'],
+        context.user_data['position'],
+        context.user_data['entry'],
+        context.user_data['stoploss'],
+        context.user_data['takeprofit'],
+        context.user_data['rr'],
+        context.user_data['pnl'],
+        context.user_data.get('strategy', ''),
+        context.user_data.get('link_tradingview', '')
     ))
     conn.commit()
     conn.close()
 
-    await update.message.reply_text("Entri trading berhasil ditambahkan ke jurnal Anda!")
+    await update.message.reply_text("Data trading berhasil disimpan!")
     return ConversationHandler.END
 
-# Fungsi untuk melihat jurnal trading
-async def view_journal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    conn = sqlite3.connect('trading_journal.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM trades WHERE user_id = ?', (user_id,))
-    trades = cursor.fetchall()
-    conn.close()
-
-    if not trades:
-        await update.message.reply_text("Jurnal trading Anda masih kosong.")
-        return
-
-    response = "Jurnal Trading Anda:\n\n"
-    for trade in trades:
-        response += f"Tanggal: {trade[2]}\n"
-        response += f"Pair: {trade[3]}\n"
-        response += f"Jenis Order: {trade[4]}\n"
-        response += f"Harga Entry: {trade[5]}\n"
-        response += f"Take Profit: {trade[6]}\n"
-        response += f"Stop Loss: {trade[7]}\n"
-        response += f"Harga Exit: {trade[8]}\n"
-        response += f"Profit/Loss: {trade[9]}\n"
-        if trade[10]:
-            response += f"Catatan: {trade[10]}\n"
-        if trade[11]:
-            response += f"Link TradingView: {trade[11]}\n"
-        response += "\n"
-
-    await update.message.reply_text(response)
-
-# Fungsi untuk menghapus entri spesifik
-async def delete_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    conn = sqlite3.connect('trading_journal.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, date, pair FROM trades WHERE user_id = ?', (user_id,))
-    trades = cursor.fetchall()
-
-    if not trades:
-        await update.message.reply_text("Tidak ada entri untuk dihapus.")
-        return
-
-    keyboard = []
-    for trade in trades:
-        keyboard.append([InlineKeyboardButton(f"{trade[1]} - {trade[2]}", callback_data=f"delete_{trade[0]}")])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Pilih entri yang ingin dihapus:", reply_markup=reply_markup)
-
-async def delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    trade_id = int(query.data.split('_')[1])
-    conn = sqlite3.connect('trading_journal.db')
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM trades WHERE id = ?', (trade_id,))
-    conn.commit()
-    conn.close()
-
-    await query.edit_message_text(text="Entri berhasil dihapus.")
-
-# Fungsi untuk mengosongkan seluruh jurnal
-async def clear_journal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    conn = sqlite3.connect('trading_journal.db')
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM trades WHERE user_id = ?', (user_id,))
-    conn.commit()
-    conn.close()
-
-    await update.message.reply_text("Seluruh jurnal trading Anda telah dikosongkan.")
-
-# Fungsi untuk mengekspor ke CSV
-async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    conn = sqlite3.connect('trading_journal.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM trades WHERE user_id = ?', (user_id,))
-    trades = cursor.fetchall()
-    conn.close()
-
-    if not trades:
-        await update.message.reply_text("Tidak ada data untuk diekspor.")
-        return
-
-    filename = f"trading_journal_{user_id}.csv"
-    with open(filename, 'w', newline='') as csvfile:
-        csv_writer = csv.writer(csvfile)
-        csv_writer.writerow(['Tanggal', 'Pair', 'Jenis Order', 'Harga Entry', 'Take Profit', 'Stop Loss', 'Harga Exit', 'Profit/Loss', 'Catatan', 'Link TradingView'])
-        for trade in trades:
-            csv_writer.writerow(trade[2:])
-
-    with open(filename, 'rb') as file:
-        await update.message.reply_document(document=file, filename=filename)
-
-    os.remove(filename)
-
-# Fungsi untuk membatalkan operasi
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Operasi dibatalkan.")
-    return ConversationHandler.END
-
-# Fungsi utama
-def main():
-    init_db()
-
-    application = Application.builder().token(TOKEN).build()
+# Fungsi utama untuk menjalankan bot
+async def main():
+    application = Application.builder().token('YOUR_TELEGRAM_BOT_TOKEN').build()
 
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('add_trade', add_trade)],
+        entry_points=[CommandHandler('start', start)],
         states={
-            PAIR: [MessageHandler(filters.TEXT & ~filters.COMMAND, pair)],
-            ORDER_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, order_type)],
-            ENTRY_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, entry_price)],
-            TAKE_PROFIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, take_profit)],
-            STOP_LOSS: [MessageHandler(filters.TEXT & ~filters.COMMAND, stop_loss)],
-            EXIT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, exit_price)],
-            PROFIT_LOSS: [MessageHandler(filters.TEXT & ~filters.COMMAND, profit_loss)],
-            NOTES: [MessageHandler(filters.TEXT & ~filters.COMMAND, notes)],
-            TRADINGVIEW_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, tradingview_link)],
+            DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, date_handler)],
+            TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, time_handler)],
+            PAIR: [MessageHandler(filters.TEXT & ~filters.COMMAND, pair_handler)],
+            WIN_LOSS: [MessageHandler(filters.TEXT & ~filters.COMMAND, win_loss_handler)],
+            POSITION: [MessageHandler(filters.TEXT & ~filters.COMMAND, position_handler)],
+            ENTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, entry_handler)],
+            STOPLOSS: [MessageHandler(filters.TEXT & ~filters.COMMAND, stoploss_handler)],
+            TAKEPROFIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, takeprofit_handler)],
+            RR: [MessageHandler(filters.TEXT & ~filters.COMMAND, rr_handler)],
+            PNL: [MessageHandler(filters.TEXT & ~filters.COMMAND, pnl_handler)],
+            STRATEGY: [MessageHandler(filters.TEXT & ~filters.COMMAND, strategy_handler)],
+            LINK_TRADINGVIEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, link_tradingview_handler)],
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[]
     )
 
     application.add_handler(conv_handler)
-    application.add_handler(CommandHandler('view_journal', view_journal))
-    application.add_handler(CommandHandler('delete_entry', delete_entry))
-    application.add_handler(CommandHandler('clear_journal', clear_journal))
-    application.add_handler(CommandHandler('export_csv', export_csv))
-    application.add_handler(CallbackQueryHandler(delete_callback, pattern='^delete_'))
 
-    # Menggunakan webhook
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=WEBHOOK_URL
-    )
+    # Jalankan bot
+    await application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    import asyncio
+    asyncio.run(main())
